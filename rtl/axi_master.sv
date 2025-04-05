@@ -172,7 +172,9 @@ module axi_master #(
             end
             
             READ_DATA: begin
-                if (m_axi_rvalid && m_axi_rready && m_axi_rlast)
+                // Move to IDLE after last data beat is received and acknowledged 
+                // by the userlogic (cmd_rvalid && cmd_rready) or go back to IDLE if transaction is complete
+                if (m_axi_rvalid && m_axi_rready && m_axi_rlast && (cmd_rvalid && cmd_rready || !m_axi_rvalid))
                     next_state = IDLE;
             end
             
@@ -201,7 +203,8 @@ module axi_master #(
         m_axi_araddr = cmd_addr;
         m_axi_arlen = cmd_len;
         
-        m_axi_rready = 1'b0;
+        // Always be ready to receive data in READ_DATA state
+        m_axi_rready = (state == READ_DATA) ? 1'b1 : 1'b0;
         
         cmd_rvalid = 1'b0;
         cmd_rdata = m_axi_rdata;
@@ -227,7 +230,10 @@ module axi_master #(
             end
             
             READ_DATA: begin
+                // Always be ready to receive data from AXI
                 m_axi_rready = 1'b1;
+                
+                // Forward valid data to command interface
                 if (m_axi_rvalid) begin
                     cmd_rvalid = 1'b1;
                     cmd_resp = m_axi_rresp;

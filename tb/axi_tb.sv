@@ -84,6 +84,10 @@ module axi_tb;
     logic                        axi_rvalid;
     logic                        axi_rready;
     
+    // Timeout counter for simulation safety
+    int timeout_counter;
+    logic timeout;
+    
     // Instantiate AXI master
     axi_master #(
         .AXI_ADDR_WIDTH(AXI_ADDR_WIDTH),
@@ -228,6 +232,22 @@ module axi_tb;
         .s_axi_rready(axi_rready)
     );
     
+    // Timeout counter for safety
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            timeout_counter <= 0;
+            timeout <= 0;
+        end else begin
+            if (timeout_counter >= 1000) begin
+                timeout <= 1;
+                if (timeout_counter == 1000)
+                    $display("ERROR: Simulation timeout at %0t", $time);
+            end else begin
+                timeout_counter <= timeout_counter + 1;
+            end
+        end
+    end
+    
     // Test sequence
     initial begin
         // Initialize inputs
@@ -263,26 +283,47 @@ module axi_tb;
         wait(master.state == master.IDLE);
         @(posedge clk);
         
+        // Reset timeout counter
+        timeout_counter = 0;
+        
         // Test 2: Single read transaction
         $display("Test 2: Single read transaction at time %0t", $time);
         cmd_valid = 1;
         cmd_write = 0;
         cmd_addr = 32'h00000010;
         cmd_len = 0; // Single transfer
-        cmd_rready = 1;
+        cmd_rready = 1; // Ready to receive data
         
         // Wait for command to be accepted
         wait(cmd_ready && cmd_valid);
         @(posedge clk);
         cmd_valid = 0;
         
-        // Wait for read data
-        wait(cmd_rvalid);
-        $display("Read data: %h (Expected: %h)", cmd_rdata, 32'hABCD1234);
+        // Wait for read data with timeout
+        fork
+            begin
+                wait(cmd_rvalid && cmd_rready);
+                $display("Read data: %h (Expected: %h)", cmd_rdata, 32'hABCD1234);
+                @(posedge clk);
+                cmd_rready = 0; // Deassert read ready after data is received
+            end
+            begin
+                wait(timeout);
+                $display("ERROR: Timeout waiting for cmd_rvalid in Test 2");
+                $finish;
+            end
+        join_any
+        disable fork;
+        
+        // Wait for transaction to complete
+        wait(master.state == master.IDLE);
+        @(posedge clk);
+        
+        // Reset timeout counter
+        timeout_counter = 0;
         
         // Test 3: Burst write (4 transfers)
         $display("Test 3: Burst write transaction at time %0t", $time);
-        @(posedge clk);
         cmd_valid = 1;
         cmd_write = 1;
         cmd_addr = 32'h00000020;
@@ -317,6 +358,9 @@ module axi_tb;
         wait(master.state == master.IDLE);
         @(posedge clk);
         
+        // Reset timeout counter
+        timeout_counter = 0;
+        
         // Test 4: Burst read (4 transfers)
         $display("Test 4: Burst read transaction at time %0t", $time);
         cmd_valid = 1;
@@ -330,20 +374,39 @@ module axi_tb;
         @(posedge clk);
         cmd_valid = 0;
         
-        // Wait for all read data
-        repeat(6) @(posedge clk);
+        // Wait for all read data with timeout
+        fork
+            begin
+                repeat(4) begin
+                    wait(cmd_rvalid && cmd_rready);
+                    $display("Burst read data received: %h at time %0t", cmd_rdata, $time);
+                    @(posedge clk);
+                end
+                cmd_rready = 0; // Deassert read ready after all data is received
+            end
+            begin
+                wait(timeout);
+                $display("ERROR: Timeout waiting for read data in Test 4");
+                $finish;
+            end
+        join_any
+        disable fork;
+        
+        // Wait for transaction to fully complete
+        wait(master.state == master.IDLE);
+        @(posedge clk);
         
         // End simulation
         repeat(10) @(posedge clk);
-        $display("Simulation finished at time %0t", $time);
+        $display("Simulation finished successfully at time %0t", $time);
         $finish;
     end
     
-    // Monitor transactions
+    // Debug monitor
     always @(posedge clk) begin
-        if (cmd_rvalid && cmd_rready) begin
-            $display("Read data received: %h at time %0t", cmd_rdata, $time);
-        end
+        if (timeout)
+            $display("DEBUG: State=%d, cmd_rvalid=%b, cmd_rready=%b, m_axi_rvalid=%b, m_axi_rready=%b, s_axi_rvalid=%b, s_axi_rready=%b",
+                     master.state, cmd_rvalid, cmd_rready, axi_rvalid, axi_rready, axi_rvalid, axi_rready);
     end
     
 endmodule 

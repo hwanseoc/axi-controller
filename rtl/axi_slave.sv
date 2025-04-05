@@ -68,6 +68,13 @@ module axi_slave #(
     input  logic                        s_axi_rready
 );
 
+    // Initialize memory to known values for simulation (all zeros)
+    initial begin
+        for (int i = 0; i < MEM_SIZE; i++) begin
+            memory[i] = 8'h00;
+        end
+    end
+
     // Memory implementation using a simple array
     logic [7:0] memory [0:MEM_SIZE-1];
     
@@ -172,6 +179,7 @@ module axi_slave #(
             end
             
             READ_DATA: begin
+                // Move to IDLE after the last data beat is sent and acknowledged
                 if (s_axi_rvalid && s_axi_rready && s_axi_rlast)
                     next_state = IDLE;
             end
@@ -227,6 +235,7 @@ module axi_slave #(
             end
             
             READ_DATA: begin
+                // Always attempt to provide valid data in READ_DATA state
                 s_axi_rvalid = 1'b1;
             end
             
